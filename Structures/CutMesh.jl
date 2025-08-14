@@ -1,20 +1,25 @@
+println("in CutMesh.jl file")
+
 struct MeshIndex{dim}
-    level::Integer
-    patch::Integer
-    element::Union{AbstractArray, Integer}
-    cut_element::Integer
+    level::Union{Integer, UndefInitializer}
+    patch::Union{Integer, UndefInitializer}
+    element::Union{AbstractArray, Integer, UndefInitializer}
+    cut_element::Union{Integer, UndefInitializer}
 
     # TODO: If length(I_element) == 1, should it still be stored as an array?
-    MeshIndex(i_level::Integer, i_patch::Integer, I_element::AbstractArray, i_cut::Integer) = 
+    MeshIndex(i_level::Integer, i_patch::Integer, I_element::AbstractArray, i_cut::Union{Integer, UndefInitializer}) = 
         new{length(I_element)}(i_level, i_patch, I_element, i_cut)
-    MeshIndex(i_level::Integer, i_patch::Integer, i_element::Integer, i_cut::Integer; dim=1) = 
-        new{dim}(i_level, i_patch, i_element, i_cut)
+
+    MeshIndex(i_level::Integer, i_patch::Union{Integer, UndefInitializer}, 
+        i_element::Union{Integer, UndefInitializer}, 
+        i_cut::Union{Integer, UndefInitializer}; 
+        dim::Integer) =  new{dim}(i_level, i_patch, i_element, i_cut)
 end
 
-# Constructors for partial indices:
-MeshIndex(i_level, i_patch, I_element) = MeshIndex(i_level, i_patch, I_element, undef)
-MeshIndex(i_level, i_patch) = MeshIndex(i_level, i_patch, undef, undef)
-MeshIndex(i_level) = MeshIndex(i_level, undef, undef, undef)
+MeshIndex(i_level::Integer, i_patch::Integer, i_element::Integer, i_cut::Integer) = MeshIndex(i_level, i_patch, i_element, i_cut, dim=1)
+MeshIndex(i_level::Integer, i_patch::Integer, I_element::AbstractArray) = MeshIndex(i_level, i_patch, I_element, undef)
+MeshIndex(i_level::Integer, i_patch::Integer, I_element::Integer) = MeshIndex(i_level, i_patch, I_element, undef, dim=length(I_element))
+
 
 
 abstract type AbstractDoF end
