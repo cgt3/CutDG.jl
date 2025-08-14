@@ -133,6 +133,38 @@ end # safetestset ElementIndex
         @test length(dof.data[3][1]) == 1
     end
 
+    @testset "getlevel" begin
+        num_levels = 3
+        n_by_level = [4; 8; 16]
+        patches_by_level = [[Bounds(1,4)], [Bounds(1,3) Bounds(7,8)], [Bounds(2,2)] ]
+
+        dof = CartesianDoF(num_levels, n_by_level, patches_by_level, elem_type=Int64)
+
+        index = ElementIndex(2, 2, 1)
+        dof.data[index.level][index.patch][index.element] = 2
+
+        level = getlevel(dof, 2)
+        @test length(level) == 2 # number of patches in level 2
+        @test length(level[1]) == 3 # Number of elements in patch 1 of level 2
+        @test all(level[2] .== [2; 0])
+    end
+
+    @testset "getpatch" begin
+        num_levels = 3
+        n_by_level = [4; 8; 16]
+        patches_by_level = [[Bounds(1,4)], [Bounds(1,3) Bounds(7,8)], [Bounds(2,2)] ]
+
+        dof = CartesianDoF(num_levels, n_by_level, patches_by_level, elem_type=Int64)
+
+        index = ElementIndex(2, 2, 1)
+        dof.data[index.level][index.patch][index.element] = 2
+
+        @test_throws "" getptach(dof, 1)
+
+        patch = getpatch(dof, 2, 2)
+        @test all(patch .== [2; 0])
+    end
+
     @testset "getindex: ElementIndex" begin
         num_levels = 3
         n_by_level = [4; 8; 16]

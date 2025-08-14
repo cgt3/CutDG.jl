@@ -3,6 +3,9 @@ module CutMesh
 # Types
 export ElementIndex, Bounds, CartesianDoF
 
+# Functions
+export getlevel, getpatch
+
 
 struct Bounds{T}
     lb::T
@@ -108,13 +111,27 @@ end
 # struct SparseCutDoF <: AbstractCutDoF
 # end
 
+@inline function getlevel(dof::AbstractDoF, i_level)
+    return dof.data[i_level]
+end
+
+@inline function getpatch(dof::AbstractDoF, ind...)
+    if length(ind) < 2
+        throw(ErrorException("CutMesh:getptach: ind must be at least length 2."))
+    end
+
+    return dof.data[ ind[1] ][ ind[2] ]
+end
+
+# TODO: add functionality to add levels/patches
+
 @inline function Base.:getindex(dof::AbstractCartesianDoF, index::ElementIndex)
     return dof.data[index.level][index.patch][index.element]
 end
 
 @inline function Base.:getindex(dof::AbstractCartesianDoF, ind...)
     if length(ind) < 3
-        throw(ErrorException("getindex(CartesianDoF): index must have at least length 3"))
+        throw(ErrorException("getindex(CartesianDoF): ind must be at least length 3."))
     end
 
     return dof.data[ ind[1] ][ ind[2] ][ ind[3] ]
@@ -128,7 +145,7 @@ end
 
 @inline function Base.:setindex!(dof::AbstractCartesianDoF, x, ind...)
     if length(ind) < 3
-        throw(ErrorException("setindex!(CartesianDoF): index must have at least length 3"))
+        throw(ErrorException("setindex!(CartesianDoF): ind must be at least length 3."))
     end
     
     dof.data[ ind[1] ][ ind[2] ][ ind[3] ] = x
