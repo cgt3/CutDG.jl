@@ -22,19 +22,19 @@ using SafeTestsets
 end # safetestset CartesianDoF
 
 
-@safetestset "MeshIndex" begin 
+@safetestset "ElementIndex" begin 
     include("../Structures/CutMesh.jl")
     using .CutMesh
 
     @testset "Integer/integer array indices only" begin
-        @test_throws "" MeshIndex(1.0, 1, 1, 1)
-        @test_throws "" MeshIndex(1, [1.0, 1.0], 1, 1)
-        @test_throws "" MeshIndex(1, 1, 1.0, 1)
-        @test_throws "" MeshIndex(1, 1, 1, 1.0)
+        @test_throws "" ElementIndex(1.0, 1, 1, 1)
+        @test_throws "" ElementIndex(1, [1.0, 1.0], 1, 1)
+        @test_throws "" ElementIndex(1, 1, 1.0, 1)
+        @test_throws "" ElementIndex(1, 1, 1, 1.0)
     end
 
     @testset "1D: Integer element index" begin
-        index = MeshIndex(1, 2, 3, 4)
+        index = ElementIndex(1, 2, 3, 4)
         
         @test index.level == 1
         @test index.patch == 2
@@ -43,13 +43,13 @@ end # safetestset CartesianDoF
     end
 
     @testset "1D: Cannot use array for 1D index" begin
-        @test_throws "" MeshIndex(1, 2, [3, 4], 5, dim=1)
+        @test_throws "" ElementIndex(1, 2, [3, 4], 5, dim=1)
     end
 
     @testset "nD: element index = nD array" begin
-        index = MeshIndex(1, 2, [3,4], 5)
+        index = ElementIndex(1, 2, [3,4], 5)
 
-        @test isa(index, MeshIndex{2})
+        @test isa(index, ElementIndex{2})
         @test index.level == 1
         @test index.patch == 2
         @test index.element == [3, 4]
@@ -58,9 +58,9 @@ end # safetestset CartesianDoF
 
 
     @testset "nD: element index = integer" begin
-        index = MeshIndex(1, 2, 3, 4, dim=2)
+        index = ElementIndex(1, 2, 3, 4, dim=2)
 
-        @test isa(index, MeshIndex{2})
+        @test isa(index, ElementIndex{2})
         @test index.level == 1
         @test index.patch == 2
         @test index.element == 3
@@ -68,14 +68,13 @@ end # safetestset CartesianDoF
     end
 
     @testset "Cartesian index" begin
-        index_1D = MeshIndex(1, 2, 3)
-        index_nD = MeshIndex(1, 2, [3, 3])
+        index_1D = ElementIndex(1, 2, 3)
+        index_nD = ElementIndex(1, 2, [3, 3])
 
         @test index_1D.cut_element == undef
         @test index_nD.cut_element == undef
     end
-
-end # safetestset MeshIndex
+end # safetestset ElementIndex
 
 
 @safetestset "CartesianDoF" begin 
@@ -132,6 +131,72 @@ end # safetestset MeshIndex
         @test length(dof.data[2][1]) == 3
         @test length(dof.data[2][2]) == 2
         @test length(dof.data[3][1]) == 1
+    end
+
+    @testset "getindex: ElementIndex" begin
+        num_levels = 3
+        n_by_level = [4; 8; 16]
+        patches_by_level = [[Bounds(1,4)], [Bounds(1,3) Bounds(7,8)], [Bounds(2,2)] ]
+
+        dof = CartesianDoF(num_levels, n_by_level, patches_by_level, elem_type=Int64)
+
+        # Test a full index
+        index = ElementIndex(2, 2, 1)
+        dof.data[index.level][index.patch][index.element] = 2
+        @test getindex(dof, index) == 2
+        @test dof[index] == 2
+    end
+
+        @testset "getindex: slurping" begin
+        num_levels = 3
+        n_by_level = [4; 8; 16]
+        patches_by_level = [[Bounds(1,4)], [Bounds(1,3) Bounds(7,8)], [Bounds(2,2)] ]
+
+        dof = CartesianDoF(num_levels, n_by_level, patches_by_level, elem_type=Int64)
+
+        index = ElementIndex(2, 2, 1)
+        dof.data[index.level][index.patch][index.element] = 2
+
+        # Test an index with incorrect length
+        @test_throws "" getindex(dof, 1)
+        @test_throws "" dof[1] == 2
+
+        # Test a valid index
+        @test getindex(dof, 2, 2, 1) == 2
+        @test dof[2,2,1] == 2
+    end
+
+
+    @testset "setindex!: ElementIndex" begin
+        num_levels = 3
+        n_by_level = [4; 8; 16]
+        patches_by_level = [[Bounds(1,4)], [Bounds(1,3) Bounds(7,8)], [Bounds(2,2)] ]
+
+        dof = CartesianDoF(num_levels, n_by_level, patches_by_level, elem_type=Int64)
+
+        index = ElementIndex(2, 2, 1)
+
+        setindex!(dof, 4, index)
+        @test dof.data[index.level][index.patch][index.element] == 4
+
+        dof[index] = 5
+        @test dof.data[index.level][index.patch][index.element] == 5
+    end
+
+    @testset "setindex!: slurping" begin
+        num_levels = 3
+        n_by_level = [4; 8; 16]
+        patches_by_level = [[Bounds(1,4)], [Bounds(1,3) Bounds(7,8)], [Bounds(2,2)] ]
+
+        dof = CartesianDoF(num_levels, n_by_level, patches_by_level, elem_type=Int64)
+
+        index = ElementIndex(2, 2, 1)
+
+        setindex!(dof, 5, 2, 2, 1)
+        @test dof.data[index.level][index.patch][index.element] == 5
+
+        dof[2,2,1] = 4
+        @test dof.data[index.level][index.patch][index.element] == 4
     end
     
 end # safetestset CartesianDoF

@@ -1,7 +1,7 @@
 module CutMesh
 
 # Types
-export MeshIndex, Bounds, CartesianDoF
+export ElementIndex, Bounds, CartesianDoF
 
 
 struct Bounds{T}
@@ -16,25 +16,26 @@ struct Bounds{T}
     end
 end
 
-struct MeshIndex{dim}
-    level::Union{Integer, UndefInitializer}
-    patch::Union{Integer, UndefInitializer}
-    element::Union{AbstractArray, Integer, UndefInitializer}
+
+struct ElementIndex{dim}
+    level::Integer
+    patch::Integer
+    element::Union{AbstractArray, Integer}
     cut_element::Union{Integer, UndefInitializer}
 
     # TODO: If length(I_element) == 1, should it still be stored as an array?
-    MeshIndex(i_level::Integer, i_patch::Integer, I_element::AbstractArray, i_cut::Union{Integer, UndefInitializer}) = 
+    ElementIndex(i_level::Integer, i_patch::Integer, I_element::AbstractArray, i_cut::Union{Integer, UndefInitializer}) = 
         new{length(I_element)}(i_level, i_patch, I_element, i_cut)
 
-    MeshIndex(i_level::Integer, i_patch::Union{Integer, UndefInitializer}, 
-        i_element::Union{Integer, UndefInitializer}, 
+    ElementIndex(i_level::Integer, i_patch::Integer, 
+        i_element::Integer, 
         i_cut::Union{Integer, UndefInitializer}; 
         dim::Integer) =  new{dim}(i_level, i_patch, i_element, i_cut)
 end
 
-MeshIndex(i_level::Integer, i_patch::Integer, i_element::Integer, i_cut::Integer) = MeshIndex(i_level, i_patch, i_element, i_cut, dim=1)
-MeshIndex(i_level::Integer, i_patch::Integer, I_element::AbstractArray) = MeshIndex(i_level, i_patch, I_element, undef)
-MeshIndex(i_level::Integer, i_patch::Integer, I_element::Integer) = MeshIndex(i_level, i_patch, I_element, undef, dim=length(I_element))
+ElementIndex(i_level::Integer, i_patch::Integer, i_element::Integer, i_cut::Integer) = ElementIndex(i_level, i_patch, i_element, i_cut, dim=1)
+ElementIndex(i_level::Integer, i_patch::Integer, I_element::AbstractArray) = ElementIndex(i_level, i_patch, I_element, undef)
+ElementIndex(i_level::Integer, i_patch::Integer, I_element::Integer) = ElementIndex(i_level, i_patch, I_element, undef, dim=length(I_element))
 
 
 abstract type AbstractDoF end
@@ -84,7 +85,6 @@ struct CartesianDoF{dim, T_elem} <: AbstractCartesianDoF
             patch_mem_level_i = Matrix{elem_type}[]
             for i_patch in eachindex(patches_by_level[i_level])
                 patch_size = patches_by_level[i_level][i_patch].ub .- patches_by_level[i_level][i_patch].lb .+ 1
-                println("patch_size = $patch_size")
                 if length(patch_size) == 1
                     push!(patch_mem_level_i, zeros(elem_type, patch_size, 1))
                 else
@@ -108,12 +108,31 @@ end
 # struct SparseCutDoF <: AbstractCutDoF
 # end
 
-function Base.:getindex(dof::AbstractCartesianDoF, index::MeshIndex)
-    return dof.data[index.level][index.patch][index.cart_element]
+@inline function Base.:getindex(dof::AbstractCartesianDoF, index::ElementIndex)
+    return dof.data[index.level][index.patch][index.element]
 end
 
-function Base.:getindex(dof::AbstractCutDoF)
+@inline function Base.:getindex(dof::AbstractCartesianDoF, ind...)
+    if length(ind) < 3
+        throw(ErrorException("getindex(CartesianDoF): index must have at least length 3"))
+    end
 
+    return dof.data[ ind[1] ][ ind[2] ][ ind[3] ]
 end
 
+
+@inline function Base.:setindex!(dof::AbstractCartesianDoF, x, index::ElementIndex)
+    dof.data[index.level][index.patch][index.element] = x
+    return x
 end
+
+@inline function Base.:setindex!(dof::AbstractCartesianDoF, x, ind...)
+    if length(ind) < 3
+        throw(ErrorException("setindex!(CartesianDoF): index must have at least length 3"))
+    end
+    
+    dof.data[ ind[1] ][ ind[2] ][ ind[3] ] = x
+    return x
+end
+
+end # CutMesh module
