@@ -1,4 +1,20 @@
-println("in CutMesh.jl file")
+module CutMesh
+
+# Types
+export MeshIndex, Bounds, CartesianDoF
+
+
+struct Bounds{T}
+    lb::T
+    ub::T
+
+    function Bounds(lb::T, ub::T) where T
+        if isa(lb, AbstractArray) && length(lb) != length(ub)
+            throw(ErrorException("Bounds: Lower bound array and upper bounds array have different lengths"))
+        end
+        return new{T}(lb, ub)
+    end
+end
 
 struct MeshIndex{dim}
     level::Union{Integer, UndefInitializer}
@@ -21,46 +37,65 @@ MeshIndex(i_level::Integer, i_patch::Integer, I_element::AbstractArray) = MeshIn
 MeshIndex(i_level::Integer, i_patch::Integer, I_element::Integer) = MeshIndex(i_level, i_patch, I_element, undef, dim=length(I_element))
 
 
-
 abstract type AbstractDoF end
 abstract type AbstractCartesianDoF <: AbstractDoF end # These can only have 1 set of DoF per background element
 abstract type AbstractCutDoF <: AbstractDoF end # These can contain multiple sets of DoF per background element
 
-struct CartesianDoF{dim} <: AbstractCartesianDoF 
+struct CartesianDoF{dim, T_elem} <: AbstractCartesianDoF 
     data
+    nxyz
 
     # num_levels = the number of levels
-    # n_by_level = the number of elements in each direction per level: n_by_level[i_level, dir]
+    # nxyz = the number of elements in each direction per level: nxyz[i_level, dir]
     # patches_by_level = 
-    function CartesianDoF(num_levels, n_by_level, patches_by_level; eltype=Float64)
-        # Error checking
-        n_prev = n_by_level[1,:]
-        for i_level in 2:size(n_by_level,1)
-            # Check that the levels are conforming
-            if any(n_by_level[i_level, :] .% n_prev != 0)
-                throw(ErrorException("CartesianDoF: levels must be conforming: n[level=$i_level] = $(n_by_level[i_level,:]), n[level=$(i_level-1)] = $n_prev"))
+    function CartesianDoF(num_levels, nxyz, patches_by_level; elem_type=Float64)
+        # Check that the coarsest mesh is fully allocated
+        if length(patches_by_level[1]) != 1
+            throw(ErrorException("CartesianDoF: Coarsest level can only have one patch."))
+        elseif any(patches_by_level[1][1].lb .!= 1) || any(patches_by_level[1][1].ub .!= nxyz[1])
+            throw(ErrorException("CartesianDoF: Base patch does not cover the whole domain"))
+        end
+
+        n_prev = nxyz[1,:]
+        for i_level in 2:size(nxyz,1)
+            # TODO: Check that grids are ordered coarsest to finest
+
+            # Check that the levels use conforming grids
+            if any(nxyz[i_level, :] .% n_prev .!= 0)
+                throw(ErrorException("CartesianDoF: levels must be conforming: n[level=$i_level] = $(nxyz[i_level,:]), n[level=$(i_level-1)] = $n_prev"))
             end
 
             # Check that the patch indices are within bounds
-            if any(patches_by_level[i_level].lb .< 1) || any(patches_by_level[i_level].ub .> n_by_level[i_level,:])
-                throw(ErrorException("CartesianDoF: patch indices (I=$(patches_by_level[i_level])) are out of bounds (n_xyz=$(n_by_level[i_level,:]))"))
+            for i_patch in eachindex(patches_by_level[i_level])
+                if any(patches_by_level[i_level][i_patch].lb .< 1) || any(patches_by_level[i_level][i_patch].ub .> nxyz[i_level,:])
+                    throw(ErrorException("CartesianDoF: patch indices (I=$(patches_by_level[i_level])) are out of bounds (n_xyz=$(nxyz[i_level,:]))"))
+                end
             end
+
+            # TODO: Check that patches do not overlap
+
+            # TODO: Check that fine patches are confined to regions covered by coarser patches
         end
 
         # Allocate memory
-        dim = size(n_by_level,2)
-        data = Vector{Matrix{eltype}}[] # Empty Vector{Vector{Matrix{eltype}}}
+        dim = size(nxyz,2)
+        data = Vector{Matrix{elem_type}}[] # Empty Vector{Vector{Matrix{elem_type}}}
         for i_level in 1:num_levels
-            patch_mem_level_i = Matrix{eltype}[]
+            patch_mem_level_i = Matrix{elem_type}[]
             for i_patch in eachindex(patches_by_level[i_level])
-                patch_size = patches_by_level.ub .- patches_by_level.lb .+ 1
-                push!(patch_mem_level_i, zeros(patch_size...))
+                patch_size = patches_by_level[i_level][i_patch].ub .- patches_by_level[i_level][i_patch].lb .+ 1
+                println("patch_size = $patch_size")
+                if length(patch_size) == 1
+                    push!(patch_mem_level_i, zeros(elem_type, patch_size, 1))
+                else
+                    push!(patch_mem_level_i, zeros(elem_type, patch_size...))
+                end
             end
             
             push!(data, patch_mem_level_i)
         end
 
-        return new{dim}(data)
+        return new{dim, elem_type}(data, nxyz)
     end
 end
 
@@ -78,5 +113,7 @@ function Base.:getindex(dof::AbstractCartesianDoF, index::MeshIndex)
 end
 
 function Base.:getindex(dof::AbstractCutDoF)
+
+end
 
 end
