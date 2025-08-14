@@ -5,12 +5,12 @@ using SafeTestsets
 #     @test_throws
 # end
 
-@safetestset "CutMesh.jl" begin 
+@safetestset "CutDG.jl" begin 
 
 
 @safetestset "Bounds" begin 
-    include("../Structures/CutMesh.jl")
-    using .CutMesh
+    include("../src/CutDG.jl")
+    using .CutDG
 
     @testset "LB/UB types must match" begin
         @test_throws "" Bounds(1, 1.0)
@@ -23,8 +23,8 @@ end # safetestset CartesianDoF
 
 
 @safetestset "ElementIndex" begin 
-    include("../Structures/CutMesh.jl")
-    using .CutMesh
+    include("../src/CutDG.jl")
+    using .CutDG
 
     @testset "Integer/integer array indices only" begin
         @test_throws "" ElementIndex(1.0, 1, 1, 1)
@@ -78,8 +78,8 @@ end # safetestset ElementIndex
 
 
 @safetestset "CartesianDoF" begin 
-    include("../Structures/CutMesh.jl")
-    using .CutMesh
+    include("../src/CutDG.jl")
+    using .CutDG
 
     @testset "Coarest level can have only one patch" begin
         num_levels = 3
