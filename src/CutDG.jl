@@ -6,8 +6,10 @@ export ElementIndex, Bounds, CartesianDoF
 # Functions
 export getlevel, getpatch
 
+export ref2phys, get_element_bounds, get_operator_scaling
 
-struct Bounds{T}
+
+struct Bounds{dim, T}
     lb::T
     ub::T
 
@@ -15,7 +17,7 @@ struct Bounds{T}
         if isa(lb, AbstractArray) && length(lb) != length(ub)
             throw(ErrorException("Bounds: Lower bound array and upper bounds array have different lengths"))
         end
-        return new{T}(lb, ub)
+        return new{length(lb), T}(lb, ub)
     end
 end
 
@@ -150,6 +152,22 @@ end
     
     dof.data[ ind[1] ][ ind[2] ][ ind[3] ] = x
     return x
+end
+
+@inline function ref2phys(bounds::Bounds, r; ref_bounds=Bounds(-1.0, 1.0))
+    return (bounds.ub - bounds.lb) * (r .- ref_bounds.lb) / (ref_bounds.ub - ref_bounds.lb) .+ bounds.lb
+end
+
+@inline function phys2ref(bounds::Bounds, x; ref_bounds=Bounds(-1.0, 1.0))
+    return (ref_bounds.ub - ref_bounds.lb) * (x .- bounds.lb) / (bounds.ub - bounds.lb).+ ref_bounds.lb
+end
+
+function get_element_bounds(domain_lb, dx, k)
+    return Bounds(domain_lb + dx*(k-1), domain_lb + dx*k)
+end
+
+function get_operator_scaling(bounds::Bounds; ref_bounds=Bounds(-1.0, 1.0))
+    return (bounds.ub - bounds.lb) / (ref_bounds.ub - ref_bounds.lb)
 end
 
 end # CutMesh module
