@@ -41,13 +41,13 @@ forcing(U, x, t) = SVector(0.0, 0.0, 0.0);
 
 # Wet dam break IC:
 x0 = 0.0;
-h0_downstream = 1.0;
-h0_upstream = h0_downstream# + 1.0;
+h0_downstream = 5.0;
+h0_upstream = h0_downstream + 1.0;
 IC(x; left_eval=false) = x < x0 || (left_eval && x <= x0) ? SVector(h0_upstream, 0.0, 0.0) : SVector(h0_downstream, 0.0, 0.0);
 
 # Formulation: ====================================================================================
 # Set the discretization parameters
-p = 2;     # Degree of the DG solution
+p = 3;     # Degree of the DG solution
 nx = 10;   # Number of elements
 dt = 1e-2; # Time step 
 
@@ -66,7 +66,7 @@ operators = (; M=rd.M, Q, L=rd.LIFT, Pq=rd.Pq, rq=rd.rq, Vq=rd.Vq, rf=rd.rf, Vf=
 
 # Set the numerical fluxes
 f_volume(UL, UR)  = flux_wintermeyer_etal(UL, UR, 1, equations);
-f_surface(UL, UR, orientation) = orientation * flux_lax_friedrichs(UL, UR, 1, equations);
+f_surface(UL, UR, orientation) = orientation == 1 ? flux_lax_friedrichs(UL, UR, 1, equations) : flux_lax_friedrichs(UR, UL, 1, equations); 
 
 # Allocate memory for the DG solution
 x = zeros(p + 1, nx);
@@ -90,15 +90,25 @@ end
 # plot_basis_vectors(rd)
 
 # Sanity Check: Plot the IC
-plot_DG_solution(U, rd, domain)
+# plot_DG_solution(U, rd, domain)
 
 params = (; domain, operators, dx, f_volume, f_surface, BC, forcing)
 
 
 # Sanity Check: Check that dUdt=0 for a lake at rest
 dUdt = zeros(elem_type, p+1, nx)
+rhs!(dUdt, U, 2*dt, params)
 
-rhs!(dUdt, U, 0.0, params)
+# Forward Euler time steps
+n_t = ceil(Int64, t_end / dt)
+@gif for i_t in 1:n_t
+    global U, dUdt
+    rhs!(dUdt, U, dt*i_t, params)
+    U = U + dt * dUdt
+    println("i_t = $i_t")
+    
+    plot_DG_solution(U, rd, domain, ylims=(0, 10))
+end
 
 
 

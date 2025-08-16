@@ -19,14 +19,15 @@ function plot_DG_solution(U, rd, domain; ylims=(0.0,3.0), field=1)
         plot!(IC_plot, ref2phys(rd.rp, bounds_k), rd.Vp * getindex.(U[:,k],field), color=:blue)
         vline!(IC_plot, [bounds_k.lb], color=:grey80)
     end
-    display(IC_plot)
+    # display(IC_plot)
 end
 
 
 function rhs!(dUdt, U, t, params)
+    # dUdt .= SVector(0.0, 0.0, 0.0)
 
-    vol_terms = 0 .* similar(U[:,1])
-    boundary_terms = 0 .* similar(U[:,1])
+    vol_terms = 0 .* U[:,1]
+    boundary_terms = 0 .* U[:,1]
 
     UL = params.BC.(U[:,1], params.domain.lb, t)
     for k in axes(U,2)
@@ -51,7 +52,7 @@ function rhs!(dUdt, U, t, params)
 
         Uf_k = params.operators.Vf * U[:,k]
         Uf_ext_k = params.operators.Vf_ext * [UL; UR]
-        boundary_terms = params.operators.L * params.f_surface.(Uf_k, Uf_ext_k, params.operators.nrJ)
+        boundary_terms = (params.operators.nrJ' .* params.operators.L) * params.f_surface.(Uf_k, Uf_ext_k, params.operators.nrJ)
 
         forcing_terms = params.operators.Pq * params.forcing.(params.operators.Vq*U[:,k], xq_k, t)
 
