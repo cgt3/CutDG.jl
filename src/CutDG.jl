@@ -154,11 +154,11 @@ end
     return x
 end
 
-@inline function ref2phys(bounds::Bounds, r; ref_bounds=Bounds(-1.0, 1.0))
+@inline function ref2phys(r, bounds::Bounds, ; ref_bounds=Bounds(-1.0, 1.0))
     return (bounds.ub - bounds.lb) * (r .- ref_bounds.lb) / (ref_bounds.ub - ref_bounds.lb) .+ bounds.lb
 end
 
-@inline function phys2ref(bounds::Bounds, x; ref_bounds=Bounds(-1.0, 1.0))
+@inline function phys2ref(x, bounds::Bounds; ref_bounds=Bounds(-1.0, 1.0))
     return (ref_bounds.ub - ref_bounds.lb) * (x .- bounds.lb) / (bounds.ub - bounds.lb).+ ref_bounds.lb
 end
 
