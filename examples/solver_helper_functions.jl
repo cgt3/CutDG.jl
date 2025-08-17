@@ -20,6 +20,7 @@ function plot_DG_solution(U, rd, domain; ylims=(0.0,3.0), field=1)
         vline!(IC_plot, [bounds_k.lb], color=:grey80)
     end
     # display(IC_plot)
+    return IC_plot
 end
 
 
@@ -29,7 +30,8 @@ function rhs!(dUdt, U, t, params)
     vol_terms = 0 .* U[:,1]
     boundary_terms = 0 .* U[:,1]
 
-    UL = params.BC.(U[:,1], params.domain.lb, t)
+    # UL = U[:,end] #
+    UL = params.BC(U[:,1], params.domain.lb, t)
     for k in axes(U,2)
         bounds_k = get_element_bounds(params.domain.lb, params.dx, k)
         scaling_k = get_operator_scaling(bounds_k)
@@ -47,7 +49,8 @@ function rhs!(dUdt, U, t, params)
         if k < size(U,2)
             UR = U[:,k + 1]
         else
-            UR = params.BC.(U[:,end], params.domain.ub, t)
+            # UR = U[:,1] 
+            UR = params.BC(U[:,end], params.domain.ub, t)
         end
 
         Uf_k = params.operators.Vf * U[:,k]
@@ -59,4 +62,42 @@ function rhs!(dUdt, U, t, params)
         dUdt[:,k] =  - params.operators.M \ vol_terms .- boundary_terms .+ forcing_terms
         UL = U[:,k]
     end
+end
+
+function rhs(U, t, params)
+    dUdt = similar(U)
+    rhs!(dUdt, U, t, params)
+    return dUdt
+end
+
+function get_entropy_variables(U, equations)
+    V = similar(U)
+
+    for k in axes(U,2)
+        V[:,k] = cons2entropy.(U[:,k], equations)
+    end
+
+    return V
+end
+
+function get_entropy_residual(dUdt, U, equations, params)
+    V = get_entropy_variables(U, equations)
+
+    entropy_residual = 0.0
+    for k in axes(U, 2)
+        scaling_k = get_operator_scaling(params.dx)
+        entropy_residual += scaling_k * V[:,k]' * params.operators.M * dUdt[:,k]
+    end
+
+    return entropy_residual
+end
+
+function get_mass(U, params)
+    mass = zero(eltype(U))
+    ones_vec = ones(length(U[:,1]))
+    for k in axes(U,2)
+        scaling_k = get_operator_scaling(params.dx)
+        mass += scaling_k * ones_vec' * params.operators.M * U[:,k]
+    end
+    return mass
 end

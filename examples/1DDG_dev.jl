@@ -16,6 +16,7 @@
 
 using LinearAlgebra
 using Plots
+using Printf
 
 using StartUpDG
 using Trixi
@@ -24,17 +25,28 @@ using TrixiShallowWater
 include("../src/CutDG.jl")
 using .CutDG
 
+include("../src/TimeIntegration.jl")
+using .TimeIntegration
+
 include("solver_helper_functions.jl")
 
 # Problem parameters ==============================================================================
 equations = ShallowWaterEquations1D(gravity=1.0)
 domain = Bounds(-3.0, 3.0)
 
+t_start = 0.0;
 t_end = 1.0;
-t_span = (0.0, t_end)
 
 # Wall (zero-normal velocity) BCs:
-BC(U, x, t) = SVector(U[1], -U[2], U[3]);
+function BC(U, x, t) 
+    U_ghost = similar(U)
+    n = length(U)
+    for i in eachindex(U_ghost)
+        i_rev = n - i + 1
+        U_ghost[i] = SVector(U[i_rev][1], -U[i_rev][2], U[i_rev][3])
+    end
+    return U_ghost
+end
 
 # Zero forcing (constant bathymetry)
 forcing(U, x, t) = SVector(0.0, 0.0, 0.0);
@@ -42,8 +54,15 @@ forcing(U, x, t) = SVector(0.0, 0.0, 0.0);
 # Wet dam break IC:
 x0 = 0.0;
 h0_downstream = 5.0;
-h0_upstream = h0_downstream + 1.0;
+h0_upstream = h0_downstream #+ 1.0;
 IC(x; left_eval=false) = x < x0 || (left_eval && x <= x0) ? SVector(h0_upstream, 0.0, 0.0) : SVector(h0_downstream, 0.0, 0.0);
+
+# # Gaussian pulse IC:
+# x0 = 0.0;
+# w = 1.0
+# h0 = 3.0;
+# IC(x; left_eval=false) =SVector(h0 + exp(-*(x-x0)^2/(w^2)), 0.0, 0.0);
+
 
 # Formulation: ====================================================================================
 # Set the discretization parameters
@@ -52,6 +71,9 @@ nx = 10;   # Number of elements
 dt = 1e-2; # Time step 
 
 dx = (domain.ub - domain.lb) / nx;
+
+t_all = t_start:dt:t_end;
+n_t = length(t_all);
 
 
 # Construct the formulation operators
@@ -67,6 +89,8 @@ operators = (; M=rd.M, Q, L=rd.LIFT, Pq=rd.Pq, rq=rd.rq, Vq=rd.Vq, rf=rd.rf, Vf=
 # Set the numerical fluxes
 f_volume(UL, UR)  = flux_wintermeyer_etal(UL, UR, 1, equations);
 f_surface(UL, UR, orientation) = orientation == 1 ? flux_lax_friedrichs(UL, UR, 1, equations) : flux_lax_friedrichs(UR, UL, 1, equations); 
+# f_surface(UL, UR, orientation) = flux_lax_friedrichs(UL, UR, 1, equations)
+
 
 # Allocate memory for the DG solution
 x = zeros(p + 1, nx);
@@ -86,30 +110,54 @@ for k in axes(x,2)
 end
 
 
+params = (; domain, operators, dx, f_volume, f_surface, BC, forcing)
+
+
 # # Sanity Check: Plot the basis vectors
 # plot_basis_vectors(rd)
 
 # Sanity Check: Plot the IC
-# plot_DG_solution(U, rd, domain)
-
-params = (; domain, operators, dx, f_volume, f_surface, BC, forcing)
+# display(plot_DG_solution(U, rd, domain, ylims=(0,5)))
 
 
-# Sanity Check: Check that dUdt=0 for a lake at rest
+# # Sanity Check: Check that dUdt=0 for a lake at rest
 dUdt = zeros(elem_type, p+1, nx)
-rhs!(dUdt, U, 2*dt, params)
+rhs!(dUdt, U, 0.0, params)
+
 
 # Forward Euler time steps
-n_t = ceil(Int64, t_end / dt)
+entropy_residual = zeros(Float64, n_t)
+mass = zeros(eltype(U), n_t)
 @gif for i_t in 1:n_t
     global U, dUdt
-    rhs!(dUdt, U, dt*i_t, params)
+
+    if i_t % 10 == 0
+        println("i_t = $i_t")
+    end
+    rhs!(dUdt, U, t_all[i_t], params)
+
+    entropy_residual[i_t] = get_entropy_residual(dUdt, U, equations, params)
+    mass[i_t] = get_mass(U, params)
+
     U = U + dt * dUdt
-    println("i_t = $i_t")
+    # U = SSPRK33(U, dt*i_t, dt, rhs, params)
     
-    plot_DG_solution(U, rd, domain, ylims=(0, 10))
+    plot_DG_solution(U, rd, domain, ylims=(0, 8))
 end
 
+# # Validation: Entropy Residual
+# max_entropy_res = maximum(entropy_residual)
+# entropy_plot_title = @sprintf("Entropy Residual (max. value=%.4e)", max_entropy_res)
+# plot(t_all, entropy_residual, title=entropy_plot_title, legend=false, xlabel="t", linewidth=4)
+# hline!([0], color=:black)
 
 
+# Validation: Conservation
+plot(title="Conservation: Mass", xlabel="t")
+plot!(t_all, getindex.(mass,1) .- mass[1][1], legend=false, linewidth=3)
+hline!([0], color=:black)
+
+plot(title="Conservation: Momentum", xlabel="t")
+plot!(t_all, getindex.(mass,2) .- mass[1][2], legend=false, linewidth=3)
+hline!([0], color=:black)
 

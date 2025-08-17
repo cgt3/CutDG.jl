@@ -170,4 +170,8 @@ function get_operator_scaling(bounds::Bounds; ref_bounds=Bounds(-1.0, 1.0))
     return (bounds.ub - bounds.lb) / (ref_bounds.ub - ref_bounds.lb)
 end
 
+function get_operator_scaling(dx::Real; ref_bounds=Bounds(-1.0, 1.0))
+    return dx / (ref_bounds.ub - ref_bounds.lb)
+end
+
 end # CutMesh module
