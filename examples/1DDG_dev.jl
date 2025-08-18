@@ -8,7 +8,7 @@
 #   - Fluxes:
 #       - Volume flux: Wintermeyer
 #       - Surface flux: Lax-Friedrichs
-#   - Time Integration: Forward Euler
+#   - Time Integration: Forward Euler/SSPRK33 or 43
 #   - Mesh: Fixed, uniform 1D Cartesian mesh
 #       - No adaptivity (single level, single patch mesh)
 #       - No cuts (static or dynamic)
@@ -54,7 +54,7 @@ forcing(U, x, t) = SVector(0.0, 0.0, 0.0);
 # Wet dam break IC:
 x0 = 0.0;
 h0_downstream = 5.0;
-h0_upstream = h0_downstream #+ 1.0;
+h0_upstream = h0_downstream + 1.0;
 IC(x; left_eval=false) = x < x0 || (left_eval && x <= x0) ? SVector(h0_upstream, 0.0, 0.0) : SVector(h0_downstream, 0.0, 0.0);
 
 # # Gaussian pulse IC:
@@ -139,8 +139,9 @@ mass = zeros(eltype(U), n_t)
     entropy_residual[i_t] = get_entropy_residual(dUdt, U, equations, params)
     mass[i_t] = get_mass(U, params)
 
-    U = U + dt * dUdt
-    # U = SSPRK33(U, dt*i_t, dt, rhs, params)
+    # U = U + dt * dUdt
+    # U = ForwardEuler(U, dt*i_t, dt, rhs, params)
+    U = SSPRK33(U, dt*i_t, dt, rhs, params)
     
     plot_DG_solution(U, rd, domain, ylims=(0, 8))
 end
@@ -157,7 +158,7 @@ plot(title="Conservation: Mass", xlabel="t")
 plot!(t_all, getindex.(mass,1) .- mass[1][1], legend=false, linewidth=3)
 hline!([0], color=:black)
 
-plot(title="Conservation: Momentum", xlabel="t")
-plot!(t_all, getindex.(mass,2) .- mass[1][2], legend=false, linewidth=3)
-hline!([0], color=:black)
-
+# # Note: wall BCs do not conserve momentum; use periodic BCs if momentum conservation is desired
+# plot(title="Conservation: Momentum", xlabel="t")
+# plot!(t_all, getindex.(mass,2) .- mass[1][2], legend=false, linewidth=3)
+# hline!([0], color=:black)

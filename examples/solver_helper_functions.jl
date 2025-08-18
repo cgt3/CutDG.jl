@@ -101,3 +101,23 @@ function get_mass(U, params)
     end
     return mass
 end
+
+# A mixed-mass matrix calculates inner products:
+# u_super' * M_mixed * u_sub = inner product over the subdomain
+# M_mixed*u_sub = M_super*u_super -> u_sub = M_mixed^(-1) * M_super * u_super
+function get_mixed_mass_matrix(subdomain, superdomain, operators; ref_domain = Bounds(-1.0, 1.0))
+    # Precompute the lengths of each interval
+    L_ref = ref_domain.ub - ref_domain.lb;
+    L_super = superdomain.ub - superdomain.lb;
+    L_sub = subdomain.ub - subdomain.lb;
+
+    # Map the subdomain's nodes to the reference domain of the superdomain
+    r_sub_lb = L_ref * (subdomain.lb - superdomain.lb) / L_super + ref_domain.lb;
+    r_sub = L_sub / L_super * (operators.r .- ref_domain.lb) / L_ref .+ r_sub_lb;
+
+    # Construct the Vandermonde matrix of the superbasis evaluated at the subdomain's 
+    # nodes in the superdomain
+    V_sub = vandermonde(Line(), rd.N, r_sub) / operators.VDM;
+
+    return L_sub / L_super * V_sub' * operators.M
+end
