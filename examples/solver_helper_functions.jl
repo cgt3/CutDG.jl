@@ -113,11 +113,59 @@ function get_mixed_mass_matrix(subdomain, superdomain, operators; ref_domain = B
 
     # Map the subdomain's nodes to the reference domain of the superdomain
     r_sub_lb = L_ref * (subdomain.lb - superdomain.lb) / L_super + ref_domain.lb;
-    r_sub = L_sub / L_super * (operators.r .- ref_domain.lb) / L_ref .+ r_sub_lb;
+    r_sub = L_sub / L_super * (operators.r .- ref_domain.lb)  .+ r_sub_lb;
 
     # Construct the Vandermonde matrix of the superbasis evaluated at the subdomain's 
     # nodes in the superdomain
     V_sub = vandermonde(Line(), rd.N, r_sub) / operators.VDM;
 
-    return L_sub / L_super * V_sub' * operators.M
+    return L_sub / L_ref * V_sub' * operators.M # should be L_sub / L_super?
+end
+
+function get_new_boundary(domain_orig, u_orig, uf_ext_L, operators; dx_tol=1e-6, penalty_weights=[0.5, 0.5], ref_domain=Bounds(-1.0, 1.0))
+    # Find the moments of u_orig
+    moments_orig = get_operator_scaling(domain_orig) * operators.M * u_orig 
+    uf_true = [uf_ext_L, 0.0]
+
+    # For checking positivity:
+    dr_dense = 1e-4
+    r_dense = ref_domain.lb:dr_dense:ref_domain.ub
+    V_pos = vandermonde(Line(), length(operators.r)-1, r_dense) / operators.VDM
+
+    # Reduce the interval size until the new solution is positive
+    penalty_min = 2 * uf_ext_L
+    u_opt = similar(u_orig)
+
+    # Brute force search to tolerance dx
+    dx = 1e-3
+    x_ub = domain_orig.ub
+    x_lb = domain_orig.lb + dx
+    x_cut_opt = x_lb
+    while dx >= dx_tol
+        for x_cut in x_lb:dx:x_ub
+            domain_new = Bounds(domain_orig.lb, x_cut)
+            M_mixed = get_mixed_mass_matrix(domain_new, domain_orig, operators, ref_domain=ref_domain)
+            u_new = M_mixed \ moments_orig
+            is_pos = all(V_pos * u_new .>= 0)
+            if is_pos
+                penalty = penalty_weights' * abs.(operators.Vf*u_new - uf_true)
+                if penalty < penalty_min
+                    penalty_min = penalty
+                    u_opt .= u_new
+                    x_cut_opt = x_cut
+                end
+            end
+        end
+        x_ub = x_cut_opt + dx
+        x_lb = x_cut_opt - dx
+        dx = dx / 10
+    end
+
+    # Return the minimizer
+    domain_new = Bounds(domain_orig.lb, x_cut_opt);
+    M_mixed = get_mixed_mass_matrix(domain_new, domain_orig, operators, ref_domain=ref_domain);
+    u_new = M_mixed \ moments_orig;
+    penalty = penalty_weights' * abs.(operators.Vf*u_new - uf_true)
+
+    return u_new, x_cut_opt, penalty
 end
