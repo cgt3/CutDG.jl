@@ -22,8 +22,8 @@ using StartUpDG
 using Trixi
 using TrixiShallowWater
 
-include("../src/CutDG.jl")
-using .CutDG
+# include("../src/CutDG.jl")
+# using .CutDG
 
 include("../src/TimeIntegration.jl")
 using .TimeIntegration

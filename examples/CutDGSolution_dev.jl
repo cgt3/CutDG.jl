@@ -22,8 +22,6 @@ using StartUpDG
 using Trixi
 using TrixiShallowWater
 
-include("../src/CutDG.jl")
-using .CutDG
 
 include("../src/TimeIntegration.jl")
 using .TimeIntegration
@@ -53,21 +51,15 @@ forcing(U, x, t) = SVector(0.0, 0.0, 0.0);
 
 # Wet dam break IC:
 x0 = 0.0;
-h0_downstream = 5.0;
+h0_downstream = 0.0;
 h0_upstream = h0_downstream + 1.0;
-IC(x; left_eval=false) = x < x0 || (left_eval && x <= x0) ? SVector(h0_upstream, 0.0, 0.0) : SVector(h0_downstream, 0.0, 0.0);
-
-# # Gaussian pulse IC:
-# x0 = 0.0;
-# w = 1.0
-# h0 = 3.0;
-# IC(x; left_eval=false) =SVector(h0 + exp(-*(x-x0)^2/(w^2)), 0.0, 0.0);
+IC(x, x_ub) = x < x0 || (x == x0 && x_ub <= x0) ? SVector(h0_upstream, 0.0, 0.0) : SVector(h0_downstream, 0.0, 0.0);
 
 
 # Formulation: ====================================================================================
 # Set the discretization parameters
 p = 3;     # Degree of the DG solution
-nx = 10;   # Number of elements
+nx = 3;   # Number of elements
 dt = 1e-2; # Time step 
 
 dx = (domain.ub - domain.lb) / nx;
@@ -93,36 +85,24 @@ f_surface(UL, UR, orientation) = orientation == 1 ? flux_lax_friedrichs(UL, UR, 
 
 
 # Allocate memory for the DG solution
-x = zeros(p + 1, nx);
-elem_type = SVector{3, Float64}
-U = zeros(elem_type, p+1, nx)
+# TODO: Change to cut memory
+cuts = [x0]
+U = CutDGSolution(p, nx, cuts, domain, elem_type=SVector{3,Float64})
 
-for k in axes(x,2)
-    bounds_k = get_element_bounds(domain.lb, dx, k)
-    x[:, k] = ref2phys(rd.r, bounds_k)
+setIC!(U, IC, operators)
+params = (; use_SRD=true, domain, operators, dx, f_volume, f_surface, BC, forcing)
 
-    xq_k = ref2phys(rd.rq, bounds_k)
-    if xq_k[end] == x0
-        U[:, k] = rd.Pq*IC.(xq_k, left_eval=true)
-    else
-        U[:, k] = rd.Pq*IC.(xq_k)
-    end
-end
+# TODO: Sanity Check: Plot the IC
+display(plot_DG_solution(U, rd, domain, ylims=(0,5)))
 
 
-params = (; domain, operators, dx, f_volume, f_surface, BC, forcing)
-
-
-# # Sanity Check: Plot the basis vectors
-# plot_basis_vectors(rd)
-
-# Sanity Check: Plot the IC
-# display(plot_DG_solution(U, rd, domain, ylims=(0,5)))
-
-
-# # Sanity Check: Check that dUdt=0 for a lake at rest
+# TODO: Sanity Check: Check that dUdt=0 for a lake at rest
 dUdt = zeros(elem_type, p+1, nx)
 rhs!(dUdt, U, 0.0, params)
+
+# TODO: check that the boundary can be updated:
+
+# TODO: check that SRD is working
 
 
 # Forward Euler time steps
@@ -135,6 +115,7 @@ mass = zeros(eltype(U), n_t)
         println("i_t = $i_t")
     end
     rhs!(dUdt, U, t_all[i_t], params)
+
 
     entropy_residual[i_t] = get_entropy_residual(dUdt, U, equations, params)
     mass[i_t] = get_mass(U, params)

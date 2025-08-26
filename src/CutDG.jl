@@ -6,7 +6,8 @@ export ElementIndex, Bounds, CartesianDoF
 # Functions
 export getlevel, getpatch
 
-export ref2phys, phys2ref, get_element_bounds, get_operator_scaling
+export ref2phys, phys2ref, get_element_bounds, get_operator_scaling, get_elem_mass, 
+export get_superbounds, get_mixed_mass_matrix, get_new_boundary, merge_elements
 
 abstract type AbstractRegionBoundary end
 
@@ -251,21 +252,6 @@ end
 end
 
 
-# TODO: handle points on mesh boundaries in higher dimensions
-@inline function get_cartesian_indices(x, num_elems, domain; eval_dir=-ones(length(x)), edge_tol=1e-12)
-    dx = (domain.ub .- domain.lb) ./ num_elems
-    index_real = (x - domain.lb) ./ dx
-
-    index0 = floor.(Int64, index_real)
-    on_boundary = abs(index0 - index_real) < edge_tol
-    if !on_boundary || index0 == 0 # x is inside an element or at the lower boundary
-        return index0 + 1
-    elseif on_boundary && index0 == num_elems
-        return index0
-    else # x is on an interior boundary and therefore touches two elements
-        return [index0, index0+1]
-    end
-end
 
 
 # TODO: add functionality to add levels/patches
@@ -374,14 +360,18 @@ function get_mixed_mass_matrix(subdomain, superdomain, operators; ref_domain = B
     return L_sub / L_ref * V_sub' * operators.M # should be L_sub / L_super?
 end
 
+function get_superbounds(bounds1, bounds2)
+    return Bounds(min(bounds1.lb, bounds2.lb), max(bounds1.ub, bounds2.ub))
+end
 
-function merge_elements(UL, boundsL, UR, boundsR; ref_domain=Bounds(-1.0, 1.0))
-    bounds_merged = Bounds(min(boundsL.lb, boundsR.lb), max(boundsL.ub, boundsR.ub))
+
+function merge_elements(U1, bounds1, U2, bounds2; ref_domain=Bounds(-1.0, 1.0))
+    bounds_merged = get_superbounds(bounds1, bounds2)
 
     # Calculate the moments from each solution on the superinterval
-    mL = get_mixed_mass_matrix(boundsL, bounds_merged, operators; ref_domain=ref_domain) * UL
-    mR = get_mixed_mass_matrix(boundsR, bounds_merged, operators; ref_domain=ref_domain) * UR
-    m_merged = mL + mR
+    m1 = get_mixed_mass_matrix(bounds1, bounds_merged, operators; ref_domain=ref_domain) * U1
+    m2 = get_mixed_mass_matrix(bounds2, bounds_merged, operators; ref_domain=ref_domain) * U2
+    m_merged = m1 + m2
 
     U_merged = operators.M \ m_merged / get_operator_scaling(bounds_merged; ref_domain=ref_domain)
 
