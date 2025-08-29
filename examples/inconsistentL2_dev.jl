@@ -4,8 +4,8 @@ using Printf
 
 using StartUpDG
 
-include("../src/CutDG.jl")
-using .CutDG
+# include("../src/CutDG.jl")
+# using .CutDG
 
 include("../src/TimeIntegration.jl")
 using .TimeIntegration
@@ -13,7 +13,7 @@ using .TimeIntegration
 include("solver_helper_functions.jl")
 
 # Construct operators
-p = 5;
+p = 2;
 rd = RefElemData(Line(), SBP{TensorProductLobatto}(), p)
 Q = rd.M * rd.Dr
 
@@ -30,12 +30,17 @@ domain = Bounds(0.0, 1.0);
 
 # Cosine:
 # For lag = 0, freq must be in [0.5, Inf)
-freq = 1.0;
-lag = 0.0;
-x0 = 0.5 / freq + lag;
-subdomain_true = Bounds(0.0, x0)
-u_true(x) = x < x0 ? cos(freq*pi*(x-lag)) : 0.0;
-function_name="cos(pi*x)"
+# freq = 1.0;
+# lag = 0.0;
+# x0 = 0.5 / freq + lag;
+# subdomain_true = Bounds(0.0, x0)
+# u_true(x) = x < x0 ? cos(freq*pi*(x-lag)) : 0.0;
+# function_name = "cos(pi*x)"
+
+u_true(x) = -(x-1)^5 + 1e-3;
+x0 = 1.0
+subdomain_true = Bounds(0.0, 1.0)
+function_name="L2_pos"
 
 # # Step:
 # x0 = 0.5
@@ -71,7 +76,7 @@ u_incon_opt, x_cut_opt, penalty = get_new_boundary(domain, u_proper, uf_ext_L, o
 subdomain_opt = Bounds(domain.lb, x_cut_opt)
 
 # Calculate the inconsistent L2 projection:
-x_cut = x0;
+x_cut = 0.35;
 subdomain_inconsistent = Bounds(0.0, x_cut);
 M_inconsistent = get_mixed_mass_matrix(subdomain_inconsistent, domain, operators);
 u_inconsistent = M_inconsistent \ moments_true;
@@ -84,7 +89,7 @@ plot(
     legend=false,
     size=(1500, 1200),
     xlim=(domain.lb, domain.ub),
-    # ylim=(-0.25, 1.5),
+    ylim=(-0.15, 1.0),
     xtickfontsize=24,
     ytickfontsize=24,
     legendfontsize=24
@@ -114,11 +119,15 @@ hline!([0.0], color=:black, label="", linewidth=2.5)
 # vline!([x_cut_opt], color=:green, label="")
 
 
-# plot!(ref2phys(r_plot, subdomain_inconsistent), V_plot*u_inconsistent, label="Inconsistent L2 Projections", color=:blue, linewidth=6)
-plot!(ref2phys(r_plot, subdomain_inconsistent), V_plot*u_inconsistent, label="", color=:blue, linewidth=6)
+plot!(ref2phys(r_plot, subdomain_inconsistent), V_plot*u_inconsistent, label="Inconsistent L2 Projections", color=:blue, linewidth=6)
+# plot!(ref2phys(r_plot, subdomain_inconsistent), V_plot*u_inconsistent, label="", color=:blue, linewidth=6)
 
 vline!([x_cut], color=:blue, label="")
 
+# png("figures/inconsistentL2_$(function_name).png")
+# png("figures/inconsistentL2_$(function_name)_p$(p)_properL2.png")
+
+# png("figures/inconsistentL2_$(function_name)_p$(p)_strong.png")
 # png("figures/inconsistentL2_$(function_name)_p$(p)_proper.png")
 png("figures/inconsistentL2_$(function_name)_p$(p)_x$(x_cut).png")
 
