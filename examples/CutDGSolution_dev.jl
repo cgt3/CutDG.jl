@@ -91,7 +91,7 @@ f_surface(UL, UR, orientation) = orientation == 1 ? flux_lax_friedrichs_modified
 cuts = [x0]
 U = CutDGSolution(p, nx, cuts, domain, operators, elem_type=SVector{3,Float64})
 
-setIC!(U, IC, operators)
+setIC!(U, IC, isactive, operators)
 params = (; use_SRD=true, domain, operators, dx, f_volume, f_surface, BC, forcing)
 
 # # Sanity Check: Plot the IC
@@ -99,7 +99,7 @@ params = (; use_SRD=true, domain, operators, dx, f_volume, f_surface, BC, forcin
 
 
 # Sanity Check: Check that mass(dUdt)=0 for a lake at rest
-dUdt = CutDGSolution(p, nx, cuts, domain, operators, elem_type=SVector{3,Float64})
+dUdt = CutDGSolution(U, 1)
 rhs!(dUdt, U, 0.0, params)
 display(plot_DG_solution(dUdt, rd, domain, ylims=(-10,10)))
 

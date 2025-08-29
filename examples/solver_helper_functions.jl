@@ -35,25 +35,31 @@ struct Bounds{dim, T}
 end
 
 
-struct CutDGSolution
+struct CutDGSolution{dim, order}
     cart_dof
     cut_dof
     cuts
     iscut
+    isactive
     cut_bounds
     domain
     p
+    order
     n_elem
     operators
 end
 
 
 function CutDGSolution(p, num_elems, cuts, domain, operators; elem_type=Float64)
+    dim = 1 # TODO: extend to 2/3D
+    order = 0 # 0th order time derivative
+
     dx = (domain.ub - domain.lb) / num_elems
     cuts_sorted = sort(cuts)
 
     cart_dof = zeros(elem_type, p+1, num_elems)
     iscut = zeros(Bool, num_elems)
+    isactive = [ [true] for i in 1:num_elems]
     cut_dof = [ Vector{SVector{3,Float64}}[] for i in 1:num_elems]
     for i in eachindex(cuts_sorted) 
         I_cut = get_cartesian_indices(cuts_sorted[i], num_elems, domain)
@@ -62,6 +68,7 @@ function CutDGSolution(p, num_elems, cuts, domain, operators; elem_type=Float64)
                 push!(cut_dof[I_cut], zeros(elem_type, p+1))
                 iscut[I_cut] = true
             end
+            push!(isactive[I_cut], true)
             push!(cut_dof[I_cut], zeros(elem_type, p+1))
         end
     end
@@ -82,7 +89,20 @@ function CutDGSolution(p, num_elems, cuts, domain, operators; elem_type=Float64)
             push!(cut_bounds[k], Bounds(x_lb, cart_bounds_k.ub))
         end
     end
-    return CutDGSolution(cart_dof, cut_dof, cuts_sorted, iscut, cut_bounds, domain, p, num_elems, operators)
+
+    return CutDGSolution{dim, order}(cart_dof, cut_dof, cuts_sorted, iscut, isactive, cut_bounds, domain, p, order, num_elems, operators)
+end
+
+# For allocating memory for cut solution with the same mesh/cuts as the given U
+function CutDGSolution(U::CutDGSolution, order)
+    dim = 1 # TODO: extend to 2/3D
+    cart_dof_new = 0.0 .* U.cart_dof
+    isactive_new = false .&& U.isactive
+    return CutDGSolution{dim, order}( 0.0 .* U.cart_dof, 0.0 .* U.cut_dof, U.cuts, U.iscut, 0 .* U.isactive, U.cut_bounds, U.domain, U.p, order, U.n_elem, U.operators)
+end
+
+function isactive(dof)
+    return any(dof .!= zeros(eltype(dof), size(dof)))
 end
 
 
@@ -270,7 +290,10 @@ function rhs!(dUdt::CutDGSolution, U::CutDGSolution, t, params)
                 UR = params.BC(U.cart_dof[:,end], params.domain.ub, t)
             end
 
-            dUdt.cart_dof[:,k] = compute_rhs_single(U.cart_dof[:,k], UL, UR, bounds_k, t, params)
+            if U.isactive[k][1] || isactive(UL) || isactive(UR)
+                dUdt.cart_dof[:,k] = compute_rhs_single(U.cart_dof[:,k], UL, UR, bounds_k, t, params)
+                dUdt.isactive[k][1] = isactive(dUdt.cart_dof[:,k])
+            end
             UL = U.cart_dof[:,k]
         else # Cut element
             for i in eachindex(U.cut_dof[k])
@@ -280,8 +303,11 @@ function rhs!(dUdt::CutDGSolution, U::CutDGSolution, t, params)
                 else
                     UR = params.BC(U.cut_dof[k][i], params.domain.ub, t)
                 end
-
-                dUdt.cut_dof[k][i] = compute_rhs_single(U.cut_dof[k][i], UL, UR, bounds_k_i, t, params)
+                
+                if U.isactive[k][i] || isactive(UL) || isactive(UR)
+                    dUdt.cut_dof[k][i] = compute_rhs_single(U.cut_dof[k][i], UL, UR, bounds_k_i, t, params)
+                    dUdt.isactive[k][i] = isactive(dUdt.cut_dof[k][i])
+                end
                 UL = U.cut_dof[k][i]
             end
         end
@@ -336,7 +362,7 @@ function rhs!(dUdt, U, t, params)
 end
 
 function rhs(U, t, params)
-    dUdt = similar(U)
+    dUdt = CutDGSolution(U, 1)
     rhs!(dUdt, U, t, params)
     return dUdt
 end
@@ -440,18 +466,20 @@ function get_cartesian_indices(x, num_elems, domain; edge_tol=1e-12)
     end
 end
 
-function setIC!(U::CutDGSolution, IC, operators)
+function setIC!(U::CutDGSolution, IC, isactive, operators)
     dx = (U.domain.ub - U.domain.lb) / U.n_elem
     for k in 1:U.n_elem
-        if !U.iscut[k] # cartesian element
+        if !U.iscut[k] # Cartesian element
             bounds_k = get_element_bounds(U.domain.lb, dx, k)
             xq_k = ref2phys(operators.rq, bounds_k)
             U.cart_dof[:,k] = operators.Pq * IC.(xq_k, bounds_k.ub)
+            U.isactive[k][1] = isactive(U.cart_dof[:,k])
         else # cut element 
             for i in eachindex(U.cut_dof[k])
                 bounds_k_i = U.cut_bounds[k][i]
                 xq_k = ref2phys(operators.rq, bounds_k_i)
                 U.cut_dof[k][i] = operators.Pq * IC.(xq_k, bounds_k_i.ub)
+                U.isactive[k][i] = isactive(U.cut_dof[k][i])
             end
         end
     end
@@ -687,7 +715,17 @@ end
 
 
 # TODO: adapt to having multiple cuts, differing p, etc etc
-function Base.:+(U1::CutDGSolution, U2::CutDGSolution)
+# Is computing (U + dUdt) qualitatively different from computing (U1 + U2)?
+function Base.:+(U1::CutDGSolution{1, 0}, U2::CutDGSolution{1,1})
+    # Error checking
+    if U1.domain != U2.domain
+        throw(ErrorException("+(CutDGSolution, CutDGSolution): Cannot add solutions on different domains."))
+    elseif U1.n_elem != U2.n_elem # TODO: Support in the future?
+        throw(ErrorException("+(CutDGSolution, CutDGSolution): Cannot add solutions with different background meshes."))
+    elseif U1.p != U2.p # TODO: Support in the future?
+        throw(ErrorException("+(CutDGSolution, CutDGSolution): Cannot add solutions of different order."))
+    end
+
     # Allocate memory and assign known variables
     operators = U1.operators
 
@@ -702,103 +740,9 @@ function Base.:+(U1::CutDGSolution, U2::CutDGSolution)
     cut_dof = [ Vector{SVector{3,Float64}}[] for i in 1:n_elem]
     cut_bounds = [ Bounds{1, Float64}[] for k in 1:n_elem ]
 
-    # Determine the near and far cuts
-    x_cut_min = min(U1.cuts[1], U2.cuts[1])
-    x_cut_max = max(U1.cuts[1], U2.cuts[1])
+    # Identify matching boundaries?
 
-    # Directly add common Cartesian elements
-    for k in 1:n_elem
-        if !U1.iscut[k] && !U2.iscut[k] # Both Cartesian
-            cart_dof[:,k] = U1.cart_dof[:,k] + U2.cart_dof[:,k]
-        end
-    end
+    # Propogate each boundary individually
 
-    # Find the background element containing the smaller of the cuts
-    k_cut_min = get_cartesian_indices(x_cut_min, U1.n_elem, U1.domain)
-    if U1.cuts[1] == U2.cuts[1]
-        println("CutDGSOlution+: Same bounds")
-        cut_dof = U1.cut_dof .+ U2.cut_dof
-        cuts = copy(U1.cuts)
-        iscut = copy(U1.iscut)
-        cut_bounds = copy(U1.cut_bounds)
-
-        return CutDGSolution(cart_dof, cut_dof, cuts, iscut, cut_bounds, domain, p, n_elem, operators)
-    else
-        # Add the cut element solution to the left of x_cut_min
-        cart_bounds_prev = get_element_bounds(domain.lb, dx, k_cut_min-1)
-        bounds_L = Bounds(cart_bounds_prev.ub, x_cut_min)
-        U1_L = get_partial_element(U1, bounds_L)
-        U2_L = get_partial_element(U2, bounds_L)
-        UL = U1_L + U2_L
-        k_L = k_cut_min
-
-        # Compute the moments of the two solutions to the right of x_min_cut
-        bounds_R = Bounds(x_cut_min, x_cut_max)
-        m1_R = get_moments_all(U1, bounds_R)
-        m2_R = get_moments_all(U2, bounds_R)
-        mR = m1_R + m2_R
-        scalingR = get_operator_scaling(bounds_R)
-        UR = operators.M \ mR / scalingR
-
-        # Check if UR has positive mass; if not, merge it with UL
-        massR = get_elem_mass(bounds_R, UR, operators)
-        if massR[1] <= 0 # TODO/FUTURE BUG: 1-> water height for SWE; find a  way to denote the pos. constrained variables 
-            UR = merge_elements(UL, bounds_L, UR, bounds_R)
-            bounds_R = Bounds(bounds_L.lb, bounds_R.ub)
-
-            UL = cart_dof[:,k_cut_min-1]
-            bounds_L = get_element_bounds(domain.lb, dx, k_cut_min - 1)
-            k_L = k_cut_min - 1
-        end
-
-        # Compute the new boundary position and the solution to the left of it (UR_new)
-        x_cut_new = bounds_R.ub
-        UR_new = copy(UR)
-        if p == 0 # Use a linear reconstruction to explicitly compute the new boundary position
-            # TODO: finish this case
-            dx_avg = 0.5*(bounds_L.ub - bounds_L.lb) + 0.5*(bounds_R.ub - bounds_R.lb)
-            slope = (UR - UL) / dx_avg
-
-            x_mid_L = 0.5*(bounds_L.ub + bounds_L.lb)
-            x_intercept = x_mid_L - UL / slope
-            if x_intercept < bounds_R.ub
-                x_cut_new = bounds_R.ub - 2*(bounds_R.ub - x_intercept)
-                UR_new = mR / (x_cut_new - bounds_R.lb)
-            else
-                x_cut_new = bounds_R.ub
-            end
-        else
-            ULf = operators.Vf * UL
-            ULf_target = ULf[2]
-            penalty_weights = [0.5, 0.5]
-            x_cut_new, UR_new = get_new_boundary(bounds_R, UR, ULf_target, operators, penalty_weights=penalty_weights)
-        end
-        cuts = [x_cut_new]
-
-        # Redistribute UL and UR_new back onto the background mesh
-        k = k_L
-        bounds_k = get_element_bounds(domain.lb, dx, k)
-        while bounds_k.ub <= x_cut_new # Process all the Cartesian elements in between k_L and the cut
-            mL = get_moments(UL, bounds_L, bounds_k, operators)
-            mR = get_moments(UR, bounds_R, bounds_k, operators)
-            cart_dof[:,k] = operators.M \ (mL + mR) / dx
-            k += 1
-            bounds_k = get_element_bounds(domain.lb, dx, k)
-        end
-
-        # Set the cut elements
-        if bounds_k.ub > x_cut_new
-            iscut[k] = true
-            mL = get_moments(UL, bounds_L, bounds_k, operators)
-            mR = get_moments(UR, bounds_R, bounds_k, operators)
-            U_k = operators.M \ (mL + mR) / (x_cut_new - bounds_k.lb)
-
-            push!(cut_dof[k], U_k) # The wet cut element
-            push!(cut_dof[k], zeros(eltype(U_k), length(U_k))) # The dry/void cut element
-
-            push!(cut_bounds[k], Bounds(bounds_k.lb, x_cut_new))
-            push!(cut_bounds[k], Bounds(x_cut_new, bounds_k.ub))
-        end
-        return CutDGSolution(cart_dof, cut_dof, cuts, iscut, cut_bounds, domain, p, n_elem, operators)
-    end
+    # Create a supermesh of the new boundaries
 end
