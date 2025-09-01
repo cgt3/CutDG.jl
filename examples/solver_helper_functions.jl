@@ -34,6 +34,7 @@ struct Bounds{dim, T}
     end
 end
 
+const REF_DOMAIN = Bounds(-1.0, 1.0)
 
 struct CutDGSolution{dim, order}
     cart_dof
@@ -59,7 +60,7 @@ function CutDGSolution(p, num_elems, cuts, domain, operators; elem_type=Float64)
 
     cart_dof = zeros(elem_type, p+1, num_elems)
     iscut = zeros(Bool, num_elems)
-    isactive = [ [true] for i in 1:num_elems]
+    isactive = [ [false] for i in 1:num_elems]
     cut_dof = [ Vector{SVector{3,Float64}}[] for i in 1:num_elems]
     for i in eachindex(cuts_sorted) 
         I_cut = get_cartesian_indices(cuts_sorted[i], num_elems, domain)
@@ -68,7 +69,7 @@ function CutDGSolution(p, num_elems, cuts, domain, operators; elem_type=Float64)
                 push!(cut_dof[I_cut], zeros(elem_type, p+1))
                 iscut[I_cut] = true
             end
-            push!(isactive[I_cut], true)
+            push!(isactive[I_cut], false)
             push!(cut_dof[I_cut], zeros(elem_type, p+1))
         end
     end
@@ -98,11 +99,19 @@ function CutDGSolution(U::CutDGSolution, order)
     dim = 1 # TODO: extend to 2/3D
     cart_dof_new = 0.0 .* U.cart_dof
     isactive_new = false .&& U.isactive
-    return CutDGSolution{dim, order}( 0.0 .* U.cart_dof, 0.0 .* U.cut_dof, U.cuts, U.iscut, 0 .* U.isactive, U.cut_bounds, U.domain, U.p, order, U.n_elem, U.operators)
+    return CutDGSolution{dim, order}( cart_dof_new, 0.0 .* U.cut_dof, U.cuts, U.iscut, isactive_new, U.cut_bounds, U.domain, U.p, order, U.n_elem, U.operators)
 end
 
 function isactive(dof)
     return any(dof .!= zeros(eltype(dof), size(dof)))
+end
+
+function is_active_or_adjacent(U, UL, UR, isactive)
+    return isactive(U) || isactive(UL) || isactive(UR)
+end
+
+function has_active(U::CutDGSolution, k)
+    return sum(U.isactive[k]) > 0
 end
 
 
@@ -148,10 +157,18 @@ function flux_central_modified(UL, UR; g=1.0)
     return SVector(f_h, f_hu, 0.0)
 end
 
-function flux_lax_friedrichs_modified(UL, UR; g=1.0)
-    return flux_central_modified(UL, UR, g=g) - max_abs_speed_naive_modified(UL, UR, g=g) * (UR - UL)
+function flux_lax_friedrichs_modified(UL, UR; g=1.0, onesided_tol=1e-12, dry_tol=1e-14)
+    f = flux_central_modified(UL, UR, g=g) - max_abs_speed_naive_modified(UL, UR, g=g) * (UR - UL)
+
+    # Do not let dry elements "give" mass
+    if ( UR[1] < dry_tol && f[1] < -onesided_tol ) || ( UL[1] < dry_tol && f[1] > onesided_tol )
+        return SVector(0.0, 0.0, 0.0)
+    end
+
+    return f
 end
 
+# TODO: may need to be adjusted to be one-sided?
 function flux_wintermeyer_etal_modified(UL, UR; g=1.0)
     # Unpack left and right state
     hL, huL, _ = UL
@@ -219,6 +236,22 @@ function plot_DG_solution(U::AbstractArray, rd, domain; ylims=(0.0,3.0), field=1
     return IC_plot
 end
 
+function getfirst(U::CutDGSolution, k)
+    if U.iscut[k]
+        return U.cut_dof[k][1]
+    else
+        return U.cart_dof[:, k]
+    end
+end
+
+function getlast(U::CutDGSolution, k)
+    if U.iscut[k]
+        return U.cut_dof[k][end]
+    else
+        return U.cart_dof[:, k]
+    end
+end
+
 function getnext(U::CutDGSolution, k)
     if U.iscut[k+1]
         return U.cut_dof[k+1][1]
@@ -279,7 +312,7 @@ function compute_rhs_single(U, UL, UR, bounds, t, params)
     return - params.operators.M \ vol_terms .- boundary_terms .+ forcing_terms
 end
 
-function rhs!(dUdt::CutDGSolution, U::CutDGSolution, t, params)
+function rhs!(dUdt::CutDGSolution, U::CutDGSolution, t, params; isactive=isactive)
     UL = params.BC(U.cart_dof[:,1], params.domain.lb, t)
     for k in 1:U.n_elem
         if !U.iscut[k] # Cartesian element
@@ -290,7 +323,7 @@ function rhs!(dUdt::CutDGSolution, U::CutDGSolution, t, params)
                 UR = params.BC(U.cart_dof[:,end], params.domain.ub, t)
             end
 
-            if U.isactive[k][1] || isactive(UL) || isactive(UR)
+            if is_active_or_adjacent(U.cart_dof[:,k], UL, UR, isactive)
                 dUdt.cart_dof[:,k] = compute_rhs_single(U.cart_dof[:,k], UL, UR, bounds_k, t, params)
                 dUdt.isactive[k][1] = isactive(dUdt.cart_dof[:,k])
             end
@@ -303,8 +336,8 @@ function rhs!(dUdt::CutDGSolution, U::CutDGSolution, t, params)
                 else
                     UR = params.BC(U.cut_dof[k][i], params.domain.ub, t)
                 end
-                
-                if U.isactive[k][i] || isactive(UL) || isactive(UR)
+
+                if is_active_or_adjacent(U.cut_dof[k][i], UL, UR, isactive)
                     dUdt.cut_dof[k][i] = compute_rhs_single(U.cut_dof[k][i], UL, UR, bounds_k_i, t, params)
                     dUdt.isactive[k][i] = isactive(dUdt.cut_dof[k][i])
                 end
@@ -313,6 +346,7 @@ function rhs!(dUdt::CutDGSolution, U::CutDGSolution, t, params)
         end
     end
 
+    # NOTE: SRD will need to change isactive in some cases (double-sided nbhds for small dry cells)
     # if params.use_SRD
     #     SRD!(dUdt, U, params.operators)
     # end
@@ -512,10 +546,6 @@ end
 function SRD_singlesided(U, U_nbr, bounds, bounds_nbr, operators)
 end
 
-function Base.:+(UL::CutDGSolution, UR::CutDGSolution)
-    return U_sum
-end
-
 
 # Moved from CutDG.jl:
 
@@ -530,6 +560,11 @@ end
 
 function get_element_bounds(domain_lb, dx, k)
     return Bounds(domain_lb + dx*(k-1), domain_lb + dx*k)
+end
+
+function get_element_bounds(U::CutDGSolution, k)
+    dx = (U.domain.ub - U.domain.lb) / U.n_elem
+    return Bounds(U.domain.lb + dx*(k-1), U.domain.lb + dx*k)
 end
 
 function get_operator_scaling(bounds::Bounds; ref_domain=Bounds(-1.0, 1.0))
@@ -589,13 +624,10 @@ function merge_elements(U1, bounds1, U2, bounds2; ref_domain=Bounds(-1.0, 1.0))
 end
 
 
-function get_new_boundary(domain_orig, u_orig, uf_ext_L, operators; dx_tol=1e-6, penalty_weights=[0.5, 0.5], ref_domain=Bounds(-1.0, 1.0))
+function get_new_boundary(domain_orig, moments_orig, uf_ext_L, operators; dx_tol=1e-6, penalty_weights=[0.5, 0.5], ref_domain=Bounds(-1.0, 1.0))
     # Find the moments of u_orig
-    moments_orig = get_operator_scaling(domain_orig) * operators.M * u_orig 
+    # moments_orig = get_operator_scaling(domain_orig) * operators.M * u_orig 
     uf_true = [uf_ext_L, 0.0]
-
-    display(u_orig)
-    # display(moments_orig)
 
     # For checking positivity:
     dr_dense = 1e-4
@@ -603,8 +635,8 @@ function get_new_boundary(domain_orig, u_orig, uf_ext_L, operators; dx_tol=1e-6,
     V_pos = vandermonde(Line(), length(operators.r)-1, r_dense) / operators.VDM
 
     # Reduce the interval size until the new solution is positive
-    penalty_min = 2 * uf_ext_L
-    u_opt = similar(u_orig)
+    penalty_min = Inf
+    u_opt = similar(moments_orig)
 
     # Brute force search to tolerance dx
     dx = 1e-3
@@ -618,7 +650,7 @@ function get_new_boundary(domain_orig, u_orig, uf_ext_L, operators; dx_tol=1e-6,
             u_new = M_mixed \ moments_orig
             is_pos = all(V_pos * u_new .>= 0)
             if is_pos
-                penalty = penalty_weights' * abs.(operators.Vf*u_new - uf_true)
+                penalty = penalty_weights' * abs.(operators.Vf*u_new .- uf_true)
                 if penalty < penalty_min
                     penalty_min = penalty
                     u_opt .= u_new
@@ -665,7 +697,7 @@ end
 # TODO: double Check
 function get_moments(U, bounds_U, bounds, operators; ref_domain=Bounds(-1.0, 1.0))
     # If the intervals are disjoint, return 0
-    if bounds_U.ub > bounds.lb || bounds_U.lb > bounds.ub 
+    if bounds_U.ub < bounds.lb || bounds_U.lb > bounds.ub
         return zeros(eltype(U), length(U))
     end
 
@@ -691,11 +723,12 @@ end
 function get_moments_all(U::CutDGSolution, bounds)
     dx = (U.domain.ub - U.domain.lb) / U.n_elem
 
-    I_lb = get_cartesian_indices(bounds.lb, U.n_elem, U.domain)
-    I_ub = get_cartesian_indices(bounds.ub, U.n_elem, U.domain)
+    I_lb = maximum(get_cartesian_indices(bounds.lb, U.n_elem, U.domain))
+    I_ub = minimum(get_cartesian_indices(bounds.ub, U.n_elem, U.domain))
 
-    k_min = min(minimum(I_lb), minimum(I_ub))
-    k_max = max(maximum(I_lb), maximum(I_ub))
+    k_min = min(I_lb, I_ub)
+    k_max = max(I_lb, I_ub)
+    println("bounds=[$(bounds.lb), $(bounds.ub)], k_min=$k_min, k_max=$k_max")
 
     m = zeros(eltype(U.cart_dof), size(U.cart_dof, 1))
     for k in k_min:k_max 
@@ -713,10 +746,8 @@ function get_moments_all(U::CutDGSolution, bounds)
     return m
 end
 
-
 # TODO: adapt to having multiple cuts, differing p, etc etc
-# Is computing (U + dUdt) qualitatively different from computing (U1 + U2)?
-function Base.:+(U1::CutDGSolution{1, 0}, U2::CutDGSolution{1,1})
+function Base.:+(U1::CutDGSolution, U2::CutDGSolution)
     # Error checking
     if U1.domain != U2.domain
         throw(ErrorException("+(CutDGSolution, CutDGSolution): Cannot add solutions on different domains."))
@@ -737,12 +768,145 @@ function Base.:+(U1::CutDGSolution{1, 0}, U2::CutDGSolution{1,1})
     cart_dof = zeros(eltype(U1.cart_dof), p+1, n_elem)
     iscut = zeros(Bool, n_elem)
 
+    isactive = [ [false] for i in 1:n_elem]
+
     cut_dof = [ Vector{SVector{3,Float64}}[] for i in 1:n_elem]
     cut_bounds = [ Bounds{1, Float64}[] for k in 1:n_elem ]
 
-    # Identify matching boundaries?
+    # Direcly add common (active) Cartesian elements
+    k = 1
+    while k < n_elem && !U1.iscut[k] && U1.isactive[k][1]==1 && !U2.iscut[k] && U2.isactive[k][1]==1
+        cart_dof[:,k] .= U1.cart_dof[:, k] + U2.cart_dof[:,k]
+        push!(isactive[k], true)
+        k += 1
+    end
+    k_cart_end = k-1
+    k_transition_start = k 
 
-    # Propogate each boundary individually
+    # Find the end of the transition region
+    k_max_active = k
+    while k_max_active < n_elem && ( has_active(U1, k_max_active) || has_active(U2, k) )
+        k_max_active += 1
+    end
 
-    # Create a supermesh of the new boundaries
+    # Find the Cartesian upperbound of the transition region
+    bounds_k_min = get_element_bounds(U1, k_cart_end)
+    bounds_k_max = get_element_bounds(U1, k_max_active)
+    bounds_transition = Bounds(bounds_k_min.ub, bounds_k_max.ub)
+
+    # Compute the moments of the solution in the transition region:
+    moments1_trans = get_moments_all(U1, bounds_transition)
+    moments2_trans = get_moments_all(U2, bounds_transition)
+    moments_trans = moments1_trans + moments2_trans
+
+    # TODO: make sure mass is positive in the transition region
+
+    # Find the new boundary in the transition region:
+    Uf_ext_L = operators.Vf_ext * [cart_dof[:, k_cart_end]; zeros(eltype(U1.cart_dof), p+1)]
+    # Find the new cut position using the mass variable
+    pos_field = 1
+    _, x_cut_new, _ =  get_new_boundary(bounds_transition, getindex.(moments_trans, pos_field), getindex(Uf_ext_L[1], pos_field), U1.operators)
+    
+    # Reshape the solution using the new cut position
+    bounds_trans_new = Bounds(bounds_transition.lb, x_cut_new)
+    M_transition = get_mixed_mass_matrix(bounds_trans_new, bounds_transition, operators)
+    display(moments_trans)
+    U_transition_new = inv(M_transition) * moments_trans
+
+    # Redistribute the new solution onto the background mesh
+    I_cut = get_cartesian_indices(x_cut_new, n_elem, domain)
+    L_ref = REF_DOMAIN.ub - REF_DOMAIN.lb
+    L_trans = bounds_trans_new.ub - bounds_trans_new.lb
+    if length(I_cut) == 1 # The cut is inside an element
+        for k in k_transition_start:I_cut - 1
+            # Interpolate the transition solution to this element
+            bounds_k = get_element_bounds(U1, k)
+            r_k = (bounds_k.ub - bounds_k.lb) / L_trans * (operators.r .- REF_DOMAIN.lb)  .+ REF_DOMAIN.lb;
+
+            # Construct the Vandermonde matrix of the superbasis evaluated at the subdomain's 
+            # nodes in the superdomain
+            V_k = vandermonde(Line(), rd.N, r_sub) / operators.VDM
+
+            cart_dof = V_k * U_transition_new
+            push!(isactive[k], true)
+        end
+
+        # Interpolate the transition solution to this element
+        k = I_cut
+        iscut[k] = true
+        bounds_k_cart = get_element_bounds(U1, k)
+        bounds_k = Bounds(bounds_k_cart.lb, x_cut_new)
+        r_k = (bounds_k.ub - bounds_k.lb) / L_trans * (operators.r .- REF_DOMAIN.lb)  .+ REF_DOMAIN.lb;
+        V_k = vandermonde(Line(), rd.N, r_k) / operators.VDM
+
+        # For the wet cut element
+        push!(cut_dof[k], V_k * U_transition_new)
+        push!(cut_bounds[k], bounds_k)
+        push!(isactive[k], true)
+
+        # For the dry cut element
+        push!(cut_dof[k], zeros(eltype(U_transition_new), length(U_transition_new)))
+        push!(cut_bounds[k], Bounds(x_cut_new, bounds_k_cart.ub))
+        push!(isactive[k], false)
+
+    else # The cut is conforming
+        k_max = I_cut[1]
+        for k in k_transition_start:k_max
+            # Interpolate the transition solution to this element
+            bounds_k = get_element_bounds(U1, k)
+            r_k = (bounds_k.ub - bounds_k.lb) / L_trans * (operators.r .- REF_DOMAIN.lb)  .+ REF_DOMAIN.lb;
+
+            # Construct the Vandermonde matrix of the superbasis evaluated at the subdomain's 
+            # nodes in the superdomain
+            V_k = vandermonde(Line(), rd.N, r_k) / operators.VDM
+
+            cart_dof = V_k * U_transition_new
+            push!(isactive[k], true)
+        end
+    end
+
+    return CutDGSolution{1, 0}(cart_dof, cut_dof, [x_cut_new], iscut, isactive, cut_bounds, domain, p, 0, n_elem, operators)
 end
+
+# TODO/BUG: pushing zeros to the solution fields will not be correct for non-constant bathymetry
+
+# # TODO: adapt to having multiple cuts, differing p, etc etc
+# function Base.:+(U1::CutDGSolution, U2::CutDGSolution)
+#     # Error checking
+#     if U1.domain != U2.domain
+#         throw(ErrorException("+(CutDGSolution, CutDGSolution): Cannot add solutions on different domains."))
+#     elseif U1.n_elem != U2.n_elem # TODO: Support in the future?
+#         throw(ErrorException("+(CutDGSolution, CutDGSolution): Cannot add solutions with different background meshes."))
+#     elseif U1.p != U2.p # TODO: Support in the future?
+#         throw(ErrorException("+(CutDGSolution, CutDGSolution): Cannot add solutions of different order."))
+#     end
+
+#     # Allocate memory and assign known variables
+#     operators = U1.operators
+
+#     p = U1.p 
+#     n_elem = U1.n_elem
+#     domain = U1.domain
+#     dx = (domain.ub - domain.lb) / n_elem
+
+#     cart_dof = zeros(eltype(U1.cart_dof), p+1, n_elem)
+#     iscut = zeros(Bool, n_elem)
+
+#     cut_dof = [ Vector{SVector{3,Float64}}[] for i in 1:n_elem]
+#     cut_bounds = [ Bounds{1, Float64}[] for k in 1:n_elem ]
+
+#     # Identify transition regions
+#     is_transition_elem = zeros(Bool, n_elem)
+#     for k in 1:n_elem 
+#         println("k=$k: has_active(U1)=$(has_active(U1,k)), has_active(U2)=$(has_active(U2,k))")
+#         is_transition_elem[k] = has_active(U1, k) != has_active(U2, k)
+#     end
+
+#     return is_transition_elem
+
+#     # In each transition region, propogate boundaries individually
+
+#     # Create a supermesh of the new boundaries
+
+#     # Merge elements on the supermesh to go back to a conforming cut mesh
+# end

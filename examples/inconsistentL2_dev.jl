@@ -30,17 +30,17 @@ domain = Bounds(0.0, 1.0);
 
 # Cosine:
 # For lag = 0, freq must be in [0.5, Inf)
-# freq = 1.0;
-# lag = 0.0;
-# x0 = 0.5 / freq + lag;
-# subdomain_true = Bounds(0.0, x0)
-# u_true(x) = x < x0 ? cos(freq*pi*(x-lag)) : 0.0;
-# function_name = "cos(pi*x)"
+freq = 1.0;
+lag = 0.0;
+x0 = 0.5 / freq + lag;
+subdomain_true = Bounds(0.0, x0)
+u_true(x) = x < x0 ? cos(freq*pi*(x-lag)) : 0.0;
+function_name = "cos(pi*x)"
 
-u_true(x) = -(x-1)^5 + 1e-3;
-x0 = 1.0
-subdomain_true = Bounds(0.0, 1.0)
-function_name="L2_pos"
+# u_true(x) = -(x-1)^5 + 1e-3;
+# x0 = 1.0
+# subdomain_true = Bounds(0.0, 1.0)
+# function_name="L2_pos"
 
 # # Step:
 # x0 = 0.5
@@ -65,6 +65,8 @@ L2_color=:red
 M_mixed_true = get_mixed_mass_matrix(subdomain_true, domain, operators);
 moments_true = M_mixed_true * u_true.(ref2phys(rd.rq, subdomain_true));
 
+# Check if the moment functions work:
+moments_test = get_moments(u_true.(ref2phys(rd.rq, subdomain_true)), subdomain_true, domain, operators)
 
 # Calculate the proper L2 projection:
 M_proper = get_mixed_mass_matrix(domain, domain, operators);
@@ -72,7 +74,7 @@ u_proper = M_proper \ moments_true;
 
 uf_ext_L = u_true(domain.lb)
 
-u_incon_opt, x_cut_opt, penalty = get_new_boundary(domain, u_proper, uf_ext_L, operators)
+u_incon_opt, x_cut_opt, penalty = get_new_boundary(domain, moments_true, uf_ext_L, operators)
 subdomain_opt = Bounds(domain.lb, x_cut_opt)
 
 # Calculate the inconsistent L2 projection:

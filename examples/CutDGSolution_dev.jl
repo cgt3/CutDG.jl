@@ -29,6 +29,7 @@ using .TimeIntegration
 
 include("solver_helper_functions.jl")
 
+
 # Problem parameters ==============================================================================
 # equations = ShallowWaterEquations1D(gravity=1.0)
 const gravity = 1.0
@@ -101,10 +102,12 @@ params = (; use_SRD=true, domain, operators, dx, f_volume, f_surface, BC, forcin
 # Sanity Check: Check that mass(dUdt)=0 for a lake at rest
 dUdt = CutDGSolution(U, 1)
 rhs!(dUdt, U, 0.0, params)
+
 display(plot_DG_solution(dUdt, rd, domain, ylims=(-10,10)))
 
-# Attempt addition:
-U_add = U + U
+# # Attempt addition:
+# result = U + U
+# display(plot_DG_solution(result, rd, domain, ylims=(0,5)))
 
 # entropy_res = get_entropy_residual(dUdt, U, params, g=gravity)
 # mass = get_mass(dUdt, params)
@@ -112,7 +115,8 @@ U_add = U + U
 # TODO: check that the boundary can be updated:
 
 # TODO: check that SRD is working
-
+U_sum = U + dUdt
+display(plot_DG_solution(U_sum, rd, domain, ylims=(0,5)))
 
 # Forward Euler time steps
 entropy_residual = zeros(Float64, n_t)
